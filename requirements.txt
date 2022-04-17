@@ -1,0 +1,9 @@
+ccxt
+numpy
+pandas
+matplotlib
+scipy
+IPython
+requests
+json
+configparser
