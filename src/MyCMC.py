@@ -85,8 +85,10 @@ class MyCMC:
 
         config = ConfigParser()
         config.read("./src/config.ini")
-        self.configBinance = dict(config["Binance"]) # Binance credentials from ini file.
-        self.configCMC = dict(config["CoinMarketCap"]) # CMC credentials from ini file.
+        try:
+            self.configBinance = dict(config["Binance"]) # Binance credentials from ini file.
+            self.configCMC = dict(config["CoinMarketCap"]) # CMC credentials from ini file.
+        except: raise FileNotFoundError("Is \"config.ini\" present in \"src\" folder?")
         self.headerCMC = {
             "Accepts": "application/json",
             "X-CMC_PRO_API_KEY": self.configCMC[

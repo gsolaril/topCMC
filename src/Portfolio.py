@@ -2,7 +2,7 @@ import os, sys, numpy
 from scipy import stats
 from matplotlib.pyplot import figure, subplot, style
 from pandas import Series, DataFrame, Timestamp, Timedelta
-from MyCMC import *
+from .MyCMC import *
 style.use("https://raw.githubusercontent.com/gsolaril/"\
  + "Templates4Coding/master/Python/mplfinance.mplstyle")
 
