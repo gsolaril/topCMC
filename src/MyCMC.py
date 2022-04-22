@@ -6,7 +6,7 @@ from pandas import to_datetime as datetime
 from IPython.display import display as print
 from requests import Session
 from pandas import concat
-from src.ProgBar import ProgBar
+from .ProgBar import ProgBar
 from configparser import ConfigParser
 from ccxt import binanceus as Binance
 
@@ -75,14 +75,16 @@ class MyCMC:
 
     _CMCURL = "https://%s-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
 
-    _dataColumns = ["time", "open", "high", "low", "close", "volume"]  ;  _jsonMapper = "BCMapper.json"
+    _dataColumns = ["time", "open", "high", "low", "close", "volume"]
+    
+    _jsonMapper = "./src/BCMapper.json"
 
     #===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#
 
     def __init__(self, test: bool = False):
 
         config = ConfigParser()
-        config.read("config.ini")
+        config.read("./src/config.ini")
         self.configBinance = dict(config["Binance"]) # Binance credentials from ini file.
         self.configCMC = dict(config["CoinMarketCap"]) # CMC credentials from ini file.
         self.headerCMC = {
@@ -93,7 +95,6 @@ class MyCMC:
         with open(self._jsonMapper, "r") as file:
             self.mapper = json.load(file) # Dict/json that maps CMC coin tickers to Binance ones.
         self.dataCMC = self.dataBinance = None # These DataFrames will get filled in the future.
-        self.requestCMC() # CoinMarketCap provides market cap ranking easily. Binance does not.
 
     #===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#
 
@@ -122,7 +123,7 @@ class MyCMC:
         Outputs:\n
             -> DataFrame with sorted top market caps (optional, else remains as instance attributes.)
         """
-
+        print("Downloading CMC data from CoinMarketCap. Please wait.")
         params = {"start": 1, "limit": 5000, "convert": "USD"}
         # Request info through CoinMarketCap API:
         with Session() as session:
@@ -143,6 +144,7 @@ class MyCMC:
         self.dataCMC = quotes[keepColumns.keys()].rename(columns = keepColumns)
         self.dataCMC["m_cap"] /= 1e9 # Easier to read market cap in billions in figures.
         if saveCSV: self.dataCMC.to_csv("./csv/QuotesCMC.csv") # Store data as CSV if wished.
+        self.filterBy = "CMC" # Next time that "getBinance" runs, pre-filter will be done by this result.
         if keepTop: return self.getCMC(keepTop) # If top rows were input, output DataFrame.
 
     def getCMC(self, keepTop: int = 50) -> Series:
@@ -153,12 +155,51 @@ class MyCMC:
         Outputs:\n
             -> DataFrame holding the top market cap assets.
         """
-        
         return self.dataCMC["m_cap"].iloc[: keepTop]
 
     #===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#
 
-    def plotCMC(self, figsize: tuple[float] = (15, 5), saveJPG: bool = False) -> figure:
+    def requestDMV(self, keepTop: int = None, saveCSV: bool = False, findMean: str = "onMonth"):
+        """
+        Request a DataFrame of Binance assets and their info, ranked by Daily Mean Volume.\n
+        Inputs:\n
+            -> "`keepTop`" as the amount of top rows being kept in the rank. If None, it is stored as it is.\n
+            -> "`saveCSV`" as a bool whether to save the DataFrame as CSV or not, just in case.\n
+        Outputs:\n
+            -> DataFrame with sorted top daily volumes caps (optional, else remains as instance attributes.)
+        """
+        binance = Binance(self.configBinance) # Create API session.
+        args = {"limit": 365, "timeframe": "1d"}
+        self.dataDMV = DataFrame()
+        print("Downloading DMV data from Binance. Please wait.")
+        for entry in binance.fetch_markets():
+            if (entry["quote"] != "USD"): continue
+            volumes = binance.fetch_ohlcv(entry["symbol"], **args)
+            volumes = numpy.array([candle[-1] for candle in volumes])
+            self.dataDMV.at[entry["base"], "onWeek"] = volumes[-7 :].mean()
+            self.dataDMV.at[entry["base"], "onMonth"] = volumes[-31 :].mean()
+            self.dataDMV.at[entry["base"], "onYear"] = volumes[-365 :].mean()
+        
+        self.dataDMV["main"] = self.dataDMV[findMean]
+        if saveCSV: self.dataDMV.to_csv("./csv/QuotesDMV.csv") # Store data as CSV if wished.
+        self.filterBy = "DMV" # Next time that "getBinance" runs, pre-filter will be done by this result.
+        if keepTop: return self.getDMV(keepTop) # If top rows were input, output DataFrame.
+
+    def getDMV(self, keepTop: int = 50) -> Series:
+        """
+        Fast retrieval of already stored top daily volume cryptocurrencies.\n
+        Inputs:\n
+            -> "`keepTop`" as the amount of top rows desired in the rank.\n
+            -> "`findMean`" as a string defining if the mean should be calculated `onWeek`-ly, `onMonth`-ly
+            or `onYear`-ly basis.\n
+        Outputs:\n
+            -> DataFrame holding the top market cap assets.
+        """
+        return self.dataDMV.sort_values("main", ascending = False)["main"].iloc[: keepTop]
+
+    #===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#
+
+    def plotFiltered(self, figsize: tuple[float] = (15, 5), saveJPG: bool = False) -> figure:
         """
         Get a simple histogram showing the market caps of the top assets from larger to smaller.
         Amount of displayed assets depends on the figure width.\n
@@ -168,25 +209,30 @@ class MyCMC:
         Outputs:\n
             -> "Figure" handle from Matplotlib.
         """
-
         # Number of assets/bars proportional to figure width.
         keepTop = figsize[0] * 50 / 15
         keepTop = int(numpy.ceil(keepTop / 10) * 10)
         keepTop = min(self.dataCMC.shape[0], keepTop)
-        topCMC = self.getCMC(keepTop = keepTop)
+        if (self.filterBy == "CMC"):
+            preFiltered = self.getCMC(keepTop = keepTop)
+            title = f"Top-%d CoinMarketCap\n" % keepTop
+            yLabel = "Market cap (Billion USD)"
+        if (self.filterBy == "DMV"):
+            preFiltered = self.getDMV(keepTop = keepTop)
+            title = f"Top-%d DailyMeanVolume\n" % keepTop
+            yLabel = "1000 x traded units"
         # Figure creation and customization.
-        axes = topCMC.plot.bar(figsize = figsize, color = "orange")
+        axes = preFiltered.plot.bar(figsize = figsize, color = "orange")
         axes.set_yscale("log")
         axes.set_xticks(range(keepTop)) 
-        xticks = topCMC.index.astype(str)
+        xticks = preFiltered.index.astype(str)
         axes.set_xticklabels(xticks, fontsize = 12, rotation = 90)
-        yLogRange = TickRange.log(topCMC.min(), topCMC.max())
+        yLogRange = TickRange.log(preFiltered.min(), preFiltered.max())
         # Vertical tick grid generating.
         axes.set_yticks(yLogRange)
         axes.set_yticklabels(yLogRange, fontsize = 12)
-        axes.set_ylabel("Market cap (Billion USD)", fontsize = 12, fontweight = "bold")
+        axes.set_ylabel(yLabel, fontsize = 12, fontweight = "bold")
         axes.set_ylim(*yLogRange[[0, -1]]) # Fit grid to logRange.
-        title = f"Top-50 CoinMarketCap\n"
         title += "‾" * int(len(title) * 1.2) # Title "underlining".
         axes.set_title(title, fontsize = 14, fontweight = "bold", va = "top")
         axes.grid(True, axis = "y", alpha = 1/4, color = "gray", lw = 3)
@@ -214,12 +260,14 @@ class MyCMC:
             since = since.strftime("%Y-%m-%d")
         args = {"limit": 50000, "timeframe": timeFrame}
         # Check if any CMC ticker is differently named in Binance.
-        quotes = self.mapCB(self.getCMC(keepTop).index)
+        if (self.filterBy == "CMC"): quotes = self.getCMC(keepTop).index
+        if (self.filterBy == "DMV"): quotes = self.getDMV(keepTop).index
+        quotes = self.mapCB(quotes)
         # Create an empty dict to hold future candle data.
         self.dataBinance = dict.fromkeys(quotes)
         notFoundQuotes = list()
 
-        progBar = ProgBar(quotes, 40, "Downloading from Binance")
+        progBar = ProgBar(quotes, 40, "Downloading OHLCV data from Binance")
         for quote in quotes: # Download each candle data as json.
 
             progBar.show()
