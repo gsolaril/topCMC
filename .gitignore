@@ -1,6 +1,8 @@
 config.ini
+config backup.ini
 101alphas.py
 101alphas.txt
+Main report v[0-9].ipynb
 dir.txt
 __pycache__
 test Alpha.csv

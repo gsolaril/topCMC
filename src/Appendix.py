@@ -225,67 +225,68 @@ class Alpha:
 
     #===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#
 
-    def rank(self, nKeep: int, nRank: int = 5, chosenAlphas: list[int] = [1, 101, 10, 40, 30]):
+    def rank(self, nRank: int, chosenAlphas: list[int] = [1, 101, 10, 40, 30], plot: bool = False):
         """
-        This method will build a "`GlobalRanking`" DataFrame (called "`.ranking`" as instance attribute)
-        whose objective is to keep the everyday "nKeep" quotes/tickers which appear the most frequently
-        when single rankings are done for each one of the calculated alphas. \nQuotes with the highest
-        rank inside each alpha's single ranking should have priority over the others, so a simple linear
-        scoring system is implemented. Then, the final "`nKeep`" quotes over each day are considered, and
-        the others are disregarded. \nReading code comments is advised to clear any further doubts.
+        This method will build a "`.ranked`" quote" DataFrame (instance attribute) which will
+        take the form of a grid. "`.index`" is the OHLCV timeline, while "`.columns`" are the
+        different tested quotes.\n "Filled" cells ("`True`") for a certain row (datetime) represent
+        those quotes that display large enough values of the "`chosenAlphas`" to be ranked as
+        top-trending quotes, feasible for trading.\n The max amount of cells per row that are
+        allowed to be filled/"`True`" is given by "`nRank`".\n
         Inputs:\n
-            -> "`nKeep`", as how many quotes are pretended to be kept in each row of the final ranking.\n
-            -> "`nRank`", as how many quotes should consider while first ranking by each single alpha.\n
-            -> "`chosenAlphas`", as a list of which particular alphas should the method contemplate.
+            -> "`nRank`", the max amount of quotes are "`.ranked`" to be `True` in the final ranking.\n
+            -> "`chosenAlphas`", a list of which particular alphas should the method contemplate.
         Outputs:\n
-            -> `None`. ("`GlobalRanking`" is generated and assigned to "`.ranking`" as a result).\n
-        NOTE: Generated `scores` are linear; proportional to the rank in each single ranking.
+            -> A figure with a Gantt-like representation of the "`.ranked`"\n
+        NOTE: Generated `scores` are linear; proportional to the "`.rank`" in each single ranking.
         A good idea however, would be a scoring scheme based on alpha values itself.
         But the orders of magnitude seem to differ so much from one alpha to another.
         So this shall be left for future developments.
         """
-        nKept = range(1, nKeep + 1)
-        nRanked = range(1, nRank + 1)
+        timeline = self.values.index
+        quotes = self.values.columns.levels[1]
         alphaReduced = self.values[chosenAlphas]
-        alphaReduced = alphaReduced.resample("1D").agg("mean")
-        # "SingleRanking" will hold the "nRank" quotes with the highest ranked values...
-        alphaSingleRanking = DataFrame(index = alphaReduced.index, # ...for each date...
-            columns = MultiIndex.from_product((chosenAlphas, nRanked))) # ...for each Single alpha.
-        # "GlobalRanking" will keep the "nKeep" quotes that appear the most in each SingleRanking row...
-        alphaGlobalRanking = DataFrame(index = alphaReduced.index, columns = nKept) # ...for each date.
-
-        timeline = alphaSingleRanking.index              # scores = -> 1st (highest) place: "nRank",
-        items = product(timeline.strftime("%Y-%m-%d"), chosenAlphas) # 2nd place: "nRank - 1", ...
-        scores = nRank - numpy.tile(range(nRank), len(chosenAlphas)) # Last (lowest) place: "1".
-        items = ["row at %s, alpha #%d" % (time, alpha) for time, alpha in items]
-
-        progBar = ProgBar(items = list(items), width = 40, verbose = "Ranking")
-        for time in timeline:
-
-            skipRow = False
-            for nAlpha in chosenAlphas:
-                progBar.show()
-                # jump over row without valid values, given the lack of info to compare any further.
-                if alphaReduced.loc[time, nAlpha].isna().all(): skipRow = True ; continue
-                else: # get an amount of "nFilter" quote names that hold the largest value of each alpha.
-                    alphaSorted = alphaReduced.loc[time, nAlpha].sort_values()
-                    alphaSingleRanking.loc[time, nAlpha] = alphaSorted.index[: nRank]
-                    
-            if skipRow: continue                  # e.g.: for "chosen =  [ ↓ 1            , ↓ 2 ]"
-            ranked = alphaSingleRanking.loc[time] + " " # and "nRank = 3": [BTC, ETH, LTC], [XMR, ETH, DOG]
-            ranked = scores * ranked # [BTC, BTC, BTC, ETH, ETH, LTC], [XMR, XMR, XMR, ETH, ETH, DOG]
-            repeats = " ".join(ranked).split(" ") # [BTC, BTC, BTC, ETH, ETH, LTC, XMR, XMR, XMR, ETH...
-            repeats = Series(filter(len, repeats)) # Erases empty strings. Solved a bug.
-            repeats = repeats.value_counts() # {"ETH": 4, "XMR": 3, "BTC": 3, "LTC": 1, "DOGE": 1}
-            newQuotes = repeats.index[: nKeep] # for "nKeep = 2": [ETH, XMR]
-            toFill = range(1, len(newQuotes) + 1) # in case less than "nKeep" elements were found.
-            alphaGlobalRanking.loc[time, toFill] = newQuotes
+        # ".ranked" DataFrame sets "True" to the "nKeep" quotes...
+        # ...with overall highest alpha values for each candle timestamp.
+        self.ranked = DataFrame(False, columns = quotes, index = timeline)
         
-        self.ranking = alphaGlobalRanking.copy() # Drop any incomplete row.
+        items = ["row %d (%s)" % (r, t.strftime("%Y-%m-%d")) for r, t in enumerate(timeline)]
+
+        progBar = ProgBar(items = items, width = 40, verbose = "Ranking")
+        for time in timeline:
+            eachAlphaRanking = alphaReduced.loc[time].unstack()
+            eachAlphaRanking = eachAlphaRanking.rank(axis = "columns").fillna(0)
+            eachAlphaRanking = eachAlphaRanking.astype(int).sum(axis = "index")
+            eachAlphaRanking = eachAlphaRanking.sort_values(ascending = False)
+            eachAlphaRanking = eachAlphaRanking.index[: nRank]
+            self.ranked.loc[time, eachAlphaRanking] = True
+            progBar.show()
 
     #===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#
 
-    def alphaplot(self, last: int = 100, quoteLeft: str = None,
+    def qualified(self):
+        """
+        Columnar (not grid) representation of "`.ranked`". Returns a list-like `DataFrame` with the
+        labels of the top-ranked quotes that were found during the execution of "`.rank`". Useful for
+        easy display of previously filtered quote sets.\n
+        Inputs:\n
+            -> `None`\n
+        Outputs:\n
+            -> `None`\n
+        """
+        nRank = self.ranked.sum(axis = "columns")
+        nRank = numpy.arange(nRank.max())[:: -1] + 1
+        timeline = self.ranked.index
+        quotes = self.ranked.columns
+        qualified = DataFrame(index = timeline, columns = nRank)
+        for time in timeline:
+            row = self.ranked.loc[time]
+            qualified.loc[time] = quotes[row]
+        return qualified.iloc[:, :: -1]
+
+    #===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#
+
+    def plotAlpha(self, last: int = 100, quoteLeft: str = None,
             quoteRight: str = None, chosenAlphas: list[int] = None) -> Figure:
         """
         Stack multiple alpha plots vertically in a single compact figure. Will compare two tickers'
@@ -354,40 +355,44 @@ class Alpha:
 
     #===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#
 
-    def alphaplot2(self, color: str = "red") -> Figure:
+    def plotRanked(self) -> Figure:
         """
-        Returns a "Gantt-like" chart that describes the incidence and frequency of the instruments in
-        the Global Ranking. Instruments which are more regularly top-ranked, appear on upper regions.
-        It's important that "`.rank`" method was executed first.\n
+        Returns a "Gantt-like" grid that describes the incidence and frequency of the ".qualified" quotes
+        that resulted from the "`.rank`" method along time. Those that are are more regularly top-ranked,
+        will draw on upper regions. \n
         Inputs:\n
-            -> "`color`" of the frequency markers.
+            -> `None`. Just run "`.rank`" before this...
         Outputs:\n
             -> Figure handle
         """
-        alphaRankingFreq = Series(self.ranking.values.reshape(-1))
-        alphaRankingFreq = alphaRankingFreq.value_counts().index
-        height = round(len(alphaRankingFreq) / 5, 1)
-        fig, ax = subplots(figsize = (15, height))
-        ax.set_yticks(numpy.arange(len(alphaRankingFreq)) + 0.5)
-        ax.set_yticklabels(alphaRankingFreq, fontsize = 14);
-        timeline = self.ranking.index
+        qualifiedSort = self.ranked.sum(axis = "index").sort_values()
+        qualifiedGrid = self.ranked.loc[:, qualifiedSort.index]
+        qualifiedGrid = qualifiedGrid.replace(False, numpy.nan)
+        timeline = qualifiedGrid.index
+        quotes = qualifiedGrid.columns
+        qualifiedGrid = (qualifiedGrid - 0.5) + range(len(quotes))
+        fig, ax = subplots(figsize = (15, len(quotes) // 5))
+
+        title = "Recurrence of cryptocurrencies in top-ranked alphas from"
+        title += " %s to %s" % (*timeline.strftime("%Y-%m-%d")[[0, -1]],)
+        ax.set_title(title)
+
+        color = ["tomato", "limegreen", "skyblue", "magenta", "pink"]
+        color = numpy.tile(color, len(quotes) // len(color) + 1)[: len(quotes)]
+        qualifiedGrid.plot(ax = ax, marker = "|", ms = 10, lw = 0, color = color)
+        ax.get_legend().remove()
+
         xTicks = timeline[: : len(timeline) // 50]
         ax.set_xticks(xTicks)
         ax.set_xlim(xTicks[0], xTicks[-1])
         xTicks = xTicks.strftime("%Y-%m-%d")
         ax.set_xticklabels(xTicks, fontsize = 12, rotation = 90);
-        title = "Recurrence of cryptocurrencies in top-%d alpha ranking from"
-        title += " %s to %s" % (*timeline.strftime("%Y-%m-%d")[[0, -1]],)
-        ax.set_title(title % self.ranking.shape[1])
-
-        alphaRankingHeights = self.ranking.replace(dict(zip(
-            alphaRankingFreq[::-1], range(alphaRankingFreq.size))))
-
-        rankArgs = {"marker": "s", "ms": 3, "color": color, "lw": 0}
-        for rank in alphaRankingHeights.columns:
-            line = alphaRankingHeights[rank] + 0.5
-            ax.plot(line.index, line.values, **rankArgs)
-        ax.set_ylim(0, len(alphaRankingFreq))
+        
+        ax.set_yticks(numpy.arange(len(quotes)) + 0.5)
+        ax.set_yticklabels(quotes, fontsize = 14)
+        ax.set_xlabel(None)
+        
+        ax.set_ylim(0, len(quotes))
         ax.grid(True, lw = 1, alpha = 1, ls = "--")
         return fig
 
