@@ -2,7 +2,7 @@ import numpy
 from pandas import Series, Timedelta, DataFrame, MultiIndex
 from matplotlib.pyplot import figure, subplots
 from matplotlib.figure import Figure, Axes
-from pandas import to_datetime as datetime
+from pandas import concat, to_datetime as datetime
 from IPython.display import display as print
 from itertools import product
 from .ProgBar import *
@@ -395,6 +395,34 @@ class Alpha:
         ax.set_ylim(0, len(quotes))
         ax.grid(True, lw = 1, alpha = 1, ls = "--")
         return fig
+    
+    #===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#
+
+    def report(self, invert: bool = False):
+        """
+        Build a `DataFrame` consisting of the list of trades/transactions that would result from applying
+        the alpha-buying strategy that is described in the main report. The DataFrame can be then used to
+        backtest different particular quotes or combinations of quotes.\n
+        Inputs:\n
+            -> "`invert`"; in case of wishing to go short (sell) instead of long (buy) by each signal.
+        Outputs:\n
+            -> Said `DataFrame` with [opening & closing] [times & prices] and the quote of each trade.
+        """
+        invert = (-1) ** invert
+        signals = (self.ranked * 1).diff()
+        columns = ["quote", "OT", "CT", "OP", "CP"]
+        trades = DataFrame()
+        for quote in signals.columns:
+            xOpened = self.cPrices[quote].loc[signals[quote] < 0].reset_index()
+            xClosed = self.cPrices[quote].loc[signals[quote] > 0].reset_index()
+            qTrades = concat((xOpened, xClosed), axis = "columns")
+            qTrades.columns = ["OT", "OP", "CT", "CP"]  ;  qTrades["quote"] = quote
+            trades = concat((trades, qTrades), ignore_index = True)
+
+        trades = trades.sort_values("OT").dropna().reset_index()[columns]
+        trades["delta"] = invert * (trades["CP"] - trades["OP"])
+        trades["log_R"] = numpy.log(trades["CP"] / trades["OP"]) * invert
+        return trades
 
 #===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#===#
 
