@@ -4,7 +4,7 @@ Just jump directly to <a href="https://github.com/gsolaril/topCMC/blob/main/Main
 <hr>
 
 **Changes after Apr/23/2022**:
-- Simplified the alpha-ranking procedure. Removed the scoring based on word repetition and counting, and applied a more straight-forward scoring method using the Pandas' "`.rank`" function. As the former leans on a triangular summation and the latter is a mergesort sort, the complexity is theoretically reduced from "$O(n^2)$" to "$O(n log(n))$".
+- Simplified the alpha-ranking procedure. Removed the scoring based on word repetition and counting, and applied a more straight-forward scoring method using the Pandas' "`.rank`" function. As the former leans on a triangular summation and the latter is a mergesort sort, the complexity is theoretically reduced from "O(n²)" to "O(n log(n))".
 - The resulting `DataFrame` from the procedure is now a `bool`ean grid-like "checklist" instead of a list of `str`ings/quotes. The main motive for this, is that each column/quote, that now holds `True` when it is top-ranked, can work as a "trade/no-trade" signal time-series.
 - Elaborated a vectorized backtesting scheme for a long-alpha strategy based on the principle in the point above. Can backtest just one quote, or a portfolio of them.
 - Returns, drawdown and statistical metrics are now calculated on the results of such vectorized backtesting scheme.
